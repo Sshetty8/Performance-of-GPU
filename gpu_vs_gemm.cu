@@ -83,6 +83,20 @@ __global__ void gemm_matrix_mult(float* array1,  int rows1,  int cols1, float* a
 		*time = clock() - *time;
 	}
 
+//generates matrix of size n by m with z rows of zero. Takes in already allocated matrix.
+
+void matrix_generator(int m, int n, int z, int* matrix) {
+	for (int i = 0; i < z; i++) {
+		for (int j = 0; j < n; j++) {
+			matrix[i*n + j] = 0;
+		}
+	}
+	for (int i = z; i < m; i++) {
+		for (int j = 0; j < n; j++) {
+			matrix[i * n + j] = rand() % 1024;
+		}
+	}
+}
 
 
 int main(int argc, char const *argv[])
