@@ -98,6 +98,15 @@ void matrix_generator(int m, int n, int z, int* matrix) {
 	}
 }
 
+void print_matrix(int m, int n, int* matrix) {
+	for(int i = 0; i < m; i++) {
+		for (int j = 0; j < n; j++) {
+			printf("%d ", matrix[i * n + j]);
+		}
+		printf("\n");
+	}
+}
+
 
 int main(int argc, char const *argv[])
 {
@@ -125,7 +134,20 @@ int main(int argc, char const *argv[])
     cudaMallocHost((void **) &h_cc, sizeof(int)*m*k);
     cudaMallocHost((void **) &h_cs, sizeof(int)*m*k);
 
-    printf("Enter number of zero rows");
+    int z; //stores # of 0s
+    printf("Enter number of zero rows:\n");
+    scanf("%d", &z);
+    matrix_generator(m, n, z, h_a);
+
+    printf("Matrix 1\n");
+    print_matrix(m, n, h_a);
+
+    matrix_generator(n, k, z, h_b);
+    printf("Matrix 2\n");
+    print_matrix(n, k, h_b);
+
+    //ADDED SCANF and COMMENTED OUT LOOP TO TEST MY MATRIX FUNCTION
+    /*
     // random initialize matrix A
     for (int i = 0; i < m; ++i) {
         for (int j = 0; j < n; ++j) {
@@ -139,6 +161,7 @@ int main(int argc, char const *argv[])
             h_b[i * k + j] = rand() % 1024;
         }
     }
+    */
 
     //float gpu_elapsed_time_ms;
 
