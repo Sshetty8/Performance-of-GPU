@@ -20,9 +20,9 @@ __global__ void gpu_matrix_mult(float *a,float *b, float *c, int m, int n, int k
     {
         for(int i = 0; i < n; i++) 
         {
-            sum += a[row * n + i] * b[i * k + col];
+            sum += a[row + i*m] * b[i + col*n];
         }
-        c[row * k + col] = sum;
+        c[col * m + row] = sum;
     }
     *time = clock64() - *time;
 } 
@@ -84,12 +84,13 @@ __global__ void gemm_matrix_mult(float* array1,  int rows1,  int cols1, float* a
 void matrix_generator(int m, int n, int z_row, int z_col, float* matrix) {
 	for (int i = 0; i < z_row; i++) {
 		for (int j = 0; j < z_col; j++) {
-			matrix[i*n + j] = 0;
+		//	matrix[i + z_row*j] = 0;     //column major
+			 matrix[i * z_col + j] = 0;	//row major
 		}
 	}
 	for (int i = z_row; i < m; i++) {
 		for (int j = z_col; j < n; j++) {
-			matrix[i * n + j] = i+1; //rand() % 1024;
+			matrix[i + m*j] = i+1; //rand() % 1024;
 		}
 	}
 }
@@ -98,7 +99,8 @@ void matrix_generator(int m, int n, int z_row, int z_col, float* matrix) {
 void print_matrix(int m, int n, float* matrix) {
 	for(int i = 0; i < m; i++) {
 		for (int j = 0; j < n; j++) {
-			printf("%f ", matrix[i * n + j]);
+			//printf("%f ", matrix[i + m*j]);	//column major
+			printf("%f ", matrix[i * n + j]);	//row major
 		}
 		printf("\n");
 	}
@@ -140,18 +142,12 @@ int main(int argc, char const *argv[])
     matrix_generator(m, n, z_row_a, z_col_a, h_a);
     matrix_generator(n, k, z_row_b,z_col_b, h_b);
 
-    //printing the matrices
+   /* //printing the matrices
     printf("\n\nMatrix A:\n");
     print_matrix(m, n, h_a);
     printf("\n\nMatrix B:\n");
     print_matrix(n, k, h_b);
-
-    //float gpu_elapsed_time_ms;
-
-    // some events to count the execution time
-   // cudaEvent_t start, stop;
-    //cudaEventCreate(&start);
-    //cudaEventCreate(&stop);
+*/
 
 	//time measurement using clock()
 	unsigned long long int *d_gpu_time;
@@ -244,21 +240,22 @@ int main(int argc, char const *argv[])
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
 
-	float alpha = 1.0;
-	float beta = 0.0;
+    const float alpha = 1.0;
+    const float beta = 0.0;
 
 	
-	cudaEventRecord(start, 0);//cudaevent time starts
-	cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, k, n, &alpha,d_a, m, d_b, n, &beta, d_cs, m);
+    cudaEventRecord(start, 0);//cudaevent time starts
+    cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, k, n, &alpha, d_a, m, d_b, n, &beta, d_cs, m);
 
-	cudaEventRecord(stop, 0);//cudaevent time stop
-	cudaMemcpy(h_cs, d_cs, sizeof(float)*m*k, cudaMemcpyDeviceToHost);
+    cudaEventRecord(stop, 0);//cudaevent time stop
+    cudaMemcpy(h_cs, d_cs, sizeof(float)*m*k, cudaMemcpyDeviceToHost);
 
 	// compute time elapse on GPU computing
      cudaEventElapsedTime(&gpu_elapsed_time_ms, start, stop);
      printf("Time elapsed measured using cudaEventRecord for SGEMM multiplication: %fms\n\n",gpu_elapsed_time_ms);
      cublasDestroy(handle);
-
+     
+    // print_matrix(m,k,h_cs);
 
     // validate results computed by GPU and GEMM
     int all_ok = 1;
@@ -266,14 +263,17 @@ int main(int argc, char const *argv[])
     {
         for (int j = 0; j < k; ++j)
         {
-            //printf("[%d][%d]:%d == [%d][%d]:%d, ", i, j, h_cc[i*k + j], i, j, h_c[i*k + j]);
-            printf("GPU: %f, Gemm: %f, SGemm: %f\n", h_c[i*k + j],  h_cc[i*k + j],  h_cs[i*k + j]);
-		if(h_cc[i*k + j] != h_c[i*k + j] || h_cc[i*k + j] != h_cs[i*k + j])
-            {
+	   // printf("GPU: %f, Gemm: %f, SGemm: %f\n", h_c[i + j * m],  h_cc[i + j * m],  h_cs[i + j * m]);	//column major
+           // printf("GPU: %f, Gemm: %f, SGemm: %f\n", h_c[i*k + j],  h_cc[i*k + j],  h_cs[i*k + j]);	//row major
+	   
+	    if(h_cc[i + j * m] != h_c[i + j * m] && h_cc[i + j * m] != h_cs[i + j * m])	//column major	
+	   // if(h_cc[i*k + j] != h_c[i*k + j] && h_cc[i*k + j] != h_cs[i*k + j])		//row major
+	    {
                 all_ok = 0;
+		break;
             }
         }
-        printf("\n");
+       // printf("\n");
     }
 
     // roughly compute speedup
