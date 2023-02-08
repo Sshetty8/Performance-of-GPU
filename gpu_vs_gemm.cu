@@ -10,9 +10,14 @@
 #define TILE_WIDTH 32
 #define TILE_HEIGHT 32
 
-__global__ void gpu_matrix_mult(float *a,float *b, float *c, int m, int n, int k, unsigned long long int *time)
+__global__ void gpu_matrix_mult(float *a,float *b, float *c, int m, int n, int k, long long int *time, long long int *time1)
 { 
-    *time = clock64();
+    long long int start = clock64();
+    long long int stop;
+    
+    long long int start1,stop1;
+    asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(start1));
+    
     int row = blockIdx.y * blockDim.y + threadIdx.y; 
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     float sum = 0.0f;
@@ -24,13 +29,31 @@ __global__ void gpu_matrix_mult(float *a,float *b, float *c, int m, int n, int k
         }
         c[col * m + row] = sum;
     }
-    *time = clock64() - *time;
+    
+    stop = clock64();
+    
+    asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(stop1));
+    
+    time1[row] = stop1 - start1;
+
+    if(stop >  start){
+	    time[row] = stop - start;
+    }
+    else {
+	    time[row] = stop + (0xffffffff - start); 
+    }
 } 
 
 
-__global__ void gemm_matrix_mult(float* array1,  int rows1,  int cols1, float* array2,  int rows2, int cols2, float* array3, unsigned long long int *time)
-	{	
-		*time = clock64();
+__global__ void gemm_matrix_mult(float* array1,  int rows1,  int cols1, float* array2,  int rows2, int cols2, float* array3, long long int *time, long long int *time1)
+	{																	
+		long long int start = clock64();
+		long long int stop;
+                 
+		long long int start1,stop1;
+    		asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(start1));		
+		
+		
 		//shared memory takes one tile at a time
 		__shared__ float S1[TILE_WIDTH][TILE_HEIGHT];	//to store tiles for array 1
 		__shared__ float S2[TILE_HEIGHT][TILE_WIDTH];	//to store tiles for array 2
@@ -76,7 +99,17 @@ __global__ void gemm_matrix_mult(float* array1,  int rows1,  int cols1, float* a
 		if(r < rows1 && c< cols2)	//removing degenerate cases
 			array3[idx]=val;	//saving multiplication result to global memory
 			
-		*time = clock64() - *time;
+		//*time = clock64() - *time;
+		asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(stop1));
+    		time1[c] = stop1 - start1;
+		
+   	 	stop = clock64();
+    		if(stop >  start){
+    	        time[c] = stop - start;
+   		 }	
+    		else {
+            	time[c] = stop + (0xffffffff - start);
+   		 }	
 	}
 
 
@@ -119,10 +152,13 @@ int main(int argc, char const *argv[])
     // allocate memory in host RAM
     float *h_a, *h_b, *h_c, *h_cc, *h_cs;
 
-    unsigned long long int *gpu_time,*gemm_time;
+    long long int *gpu_time = 0, *gemm_time = 0;
+    long long int *g_time1 = 0, *g_time2 = 0;
 
-    gpu_time = (unsigned long long int*)malloc(sizeof(unsigned long long int));
-    gemm_time = (unsigned long long int *)malloc(sizeof(unsigned long long int));
+    gpu_time = (long long int*)malloc(sizeof(long long int));
+    gemm_time = (long long int *)malloc(sizeof(long long int));
+    g_time1 = (long long int *)malloc(sizeof(long long int));
+    g_time2 = (long long int *)malloc(sizeof(long long int));
 
     cudaMallocHost((void **) &h_a, sizeof(float)*m*n);
     cudaMallocHost((void **) &h_b, sizeof(float)*n*k);
@@ -150,9 +186,10 @@ int main(int argc, char const *argv[])
 */
 
 	//time measurement using clock()
-	unsigned long long int *d_gpu_time;
-	unsigned long long int *d_gemm_time;
-	
+	long long int *d_gpu_time;
+	long long int *d_gemm_time;
+	long long int *d_g_time1;
+	long long int *d_g_time2;	
 	
     // start to count execution time of GPU version
     //cudaEventRecord(start, 0);
@@ -165,9 +202,10 @@ int main(int argc, char const *argv[])
     cudaMalloc((void **) &d_cc, sizeof(float)*m*k);
     cudaMalloc((void **) &d_cs, sizeof(float)*m*k);
     
-    cudaMalloc((void **)&d_gpu_time, sizeof(unsigned long long int));
-    cudaMalloc((void **) &d_gemm_time, sizeof(unsigned long long int));
-    
+    cudaMalloc((void **)&d_gpu_time, sizeof(long long int));
+    cudaMalloc((void **) &d_gemm_time, sizeof(long long int));
+    cudaMalloc((void **) &d_g_time1, sizeof(long long int));
+    cudaMalloc((void **) &d_g_time2, sizeof(long long int));
 
     // copy matrix A and B from host to device memory
     int err = cudaMemcpy(d_a, h_a, sizeof(float)*m*n, cudaMemcpyHostToDevice);
@@ -204,29 +242,34 @@ int main(int argc, char const *argv[])
 
 
     // Launch kernel GPU function 
-    gpu_matrix_mult<<<dimGrid, dimBlock>>>(d_a, d_b, d_c, m, n, k,d_gpu_time);  
+    gpu_matrix_mult<<<dimGrid, dimBlock>>>(d_a, d_b, d_c, m, n, k, d_gpu_time, d_g_time1);  
     
     // Transefr results from device to host 
     err = cudaMemcpy(h_c, d_c, sizeof(float)*m*k, cudaMemcpyDeviceToHost);
     if(err > 0){printf("\nError copying: %d\n",err);return 0;}
-    err = cudaMemcpy(gpu_time, d_gpu_time, sizeof(unsigned long long int), cudaMemcpyDeviceToHost);
+    err = cudaMemcpy(gpu_time, d_gpu_time, sizeof(long long int), cudaMemcpyDeviceToHost);
+    if(err > 0){printf("\nError copying: %d\n",err);return 0;}
+			
+    err = cudaMemcpy(g_time1, d_g_time1, sizeof(long long int), cudaMemcpyDeviceToHost);
     if(err > 0){printf("\nError copying: %d\n",err);return 0;}
 
     cudaDeviceSynchronize();
 
-    printf("Time elapsed on matrix multiplication of %dx%d . %dx%d on GPU: %fms.\n\n", m, n, n, k, (*gpu_time/clock_rate)*1000.0);
-
-
+    printf("Time elapsed on matrix multiplication of %dx%d . %dx%d on GPU: %fms.\n\n", m, n, n, k, (gpu_time[0]/clock_rate)*1000);
+    printf("Time using the globaltimer function on GPU: %lld\n\n",g_time1[0]);						
+													
     //computation using the gemm
-    gemm_matrix_mult<<<dimGrid, dimBlock>>>(d_a, m, n, d_b, n, k, d_cc,d_gemm_time);
+    gemm_matrix_mult<<<dimGrid, dimBlock>>>(d_a, m, n, d_b, n, k, d_cc,d_gemm_time, d_g_time2);
    
     // Transfer results from device to host
     cudaMemcpy(h_cc, d_cc, sizeof(float)*m*k, cudaMemcpyDeviceToHost);
-    cudaMemcpy(gemm_time, d_gemm_time, sizeof(unsigned long long int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(gemm_time, d_gemm_time, sizeof(long long int), cudaMemcpyDeviceToHost);
+    err = cudaMemcpy(g_time2, d_g_time2, sizeof(long long int), cudaMemcpyDeviceToHost);
+    if(err > 0){printf("\nError copying: %d\n",err);return 0;}
     cudaDeviceSynchronize();
 
-    printf("Time elapsed on matrix multiplication of %dx%d . %dx%d on GEMM: %fms.\n\n", m, n, n, k, (*gemm_time/clock_rate)*1000.0);
-
+    printf("Time elapsed on matrix multiplication of %dx%d . %dx%d on GEMM: %fms.\n\n", m, n, n, k, (gemm_time[0]/clock_rate)*1000.0);
+    printf("Time using the globaltimer function on GPU: %lld\n\n",g_time2[0]);
 
     //computaion using the cublass for GEMM
 	cublasHandle_t handle;
@@ -237,23 +280,26 @@ int main(int argc, char const *argv[])
 
     // some events to count the execution time
     cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
 
     const float alpha = 1.0;
     const float beta = 0.0;
 
-	
+    cudaEventCreate(&start);	
     cudaEventRecord(start, 0);//cudaevent time starts
+
     cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, k, n, &alpha, d_a, m, d_b, n, &beta, d_cs, m);
 
+    cudaEventCreate(&stop);
     cudaEventRecord(stop, 0);//cudaevent time stop
+    cudaEventSynchronize(stop);
+
+    // compute time elapse on GPU computing
+    cudaEventElapsedTime(&gpu_elapsed_time_ms, start, stop);
+
     cudaMemcpy(h_cs, d_cs, sizeof(float)*m*k, cudaMemcpyDeviceToHost);
 
-	// compute time elapse on GPU computing
-     cudaEventElapsedTime(&gpu_elapsed_time_ms, start, stop);
-     printf("Time elapsed measured using cudaEventRecord for SGEMM multiplication: %fms\n\n",gpu_elapsed_time_ms);
-     cublasDestroy(handle);
+    printf("Time elapsed measured using cudaEventRecord for SGEMM multiplication: %fms\n\n",gpu_elapsed_time_ms);
+    cublasDestroy(handle);
      
     // print_matrix(m,k,h_cs);
 
@@ -266,15 +312,17 @@ int main(int argc, char const *argv[])
 	   // printf("GPU: %f, Gemm: %f, SGemm: %f\n", h_c[i + j * m],  h_cc[i + j * m],  h_cs[i + j * m]);	//column major
            // printf("GPU: %f, Gemm: %f, SGemm: %f\n", h_c[i*k + j],  h_cc[i*k + j],  h_cs[i*k + j]);	//row major
 	   
-	    if(h_cc[i + j * m] != h_c[i + j * m] && h_cc[i + j * m] != h_cs[i + j * m])	//column major	
-	   // if(h_cc[i*k + j] != h_c[i*k + j] && h_cc[i*k + j] != h_cs[i*k + j])		//row major
+	//    if(h_cc[i + j * m] != h_c[i + j * m] && h_cc[i + j * m] != h_cs[i + j * m])	//column major	
+	    if(h_c[i*k + j] != h_cc[i*k + j] && h_c[i*k + j] != h_cs[i*k + j])		//row major
 	    {
                 all_ok = 0;
+		printf("GPU: %f, Gemm: %f, SGemm: %f\n", h_c[i*k + j],  h_cc[i*k + j],  h_cs[i*k + j]);
 		break;
             }
         }
        // printf("\n");
     }
+    
 
     // roughly compute speedup
     if(all_ok)
